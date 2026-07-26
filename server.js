@@ -2,6 +2,7 @@ const express = require('express');
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const Iyzipay = require('iyzipay');
 
 const app = express();
 app.use(express.json());
@@ -16,6 +17,13 @@ if (!fs.existsSync(PROJECTS_DIR)) {
 
 let userPlan = 'free'; // 'free' veya 'pro'
 const projects = {};
+
+// İyzico Yapılandırması (Test / Sandbox Bilgileri - Canlıya geçerken kendi anahtarlarınızı yazarsınız)
+const iyzipay = new Iyzipay({
+    apiKey: process.env.IYZICO_API_KEY || 'sandbox-sizin-apikeyiniz',
+    secretKey: process.env.IYZICO_SECRET_KEY || 'sandbox-sizin-secretkeyiniz',
+    uri: 'https://sandbox-api.iyzipay.com' // Canlı ortam için: https://api.iyzipay.com
+});
 
 // 1. STATİK SİTELERİ INTERNETTE YAYINLAMA MOTORU (Middleware)
 app.use('/preview/:name', (req, res, next) => {
@@ -34,7 +42,6 @@ app.use('/preview/:name', (req, res, next) => {
     }
 
     const projectPath = path.join(PROJECTS_DIR, name);
-    
     let targetDir = projectPath;
     if (fs.existsSync(path.join(projectPath, 'dist'))) {
         targetDir = path.join(projectPath, 'dist');
@@ -70,8 +77,8 @@ app.get('/', (req, res) => {
             </div>
             <div class="flex items-center space-x-4">
                 <div id="plan-badge" class="text-xs px-3 py-1 rounded-full border font-medium">Yükleniyor...</div>
-                <button id="upgrade-btn" onclick="upgradePlan()" class="hidden bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold px-3 py-1.5 rounded-lg text-xs hover:opacity-90 transition">
-                    ✨ Pro'ya Yükselt
+                <button id="upgrade-btn" onclick="startPayment()" class="hidden bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold px-3 py-1.5 rounded-lg text-xs hover:opacity-90 transition">
+                    ✨ Pro'ya Yükselt (Ödeme Yap)
                 </button>
             </div>
         </nav>
@@ -89,6 +96,15 @@ app.get('/', (req, res) => {
 
             <div id="project-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
         </main>
+
+        <!-- İyzico Ödeme Formu Alanı -->
+        <div id="iyzico-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+            <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 w-full max-w-xl shadow-2xl relative">
+                <button onclick="closeIyzicoModal()" class="absolute top-3 right-4 text-zinc-400 hover:text-white text-lg">✕</button>
+                <h2 class="text-lg font-bold mb-3 text-zinc-200">Pro Plan Güvenli Ödeme</h2>
+                <div id="iyzico-checkout-form" class="overflow-y-auto max-h-[80vh]"></div>
+            </div>
+        </div>
 
         <div id="deploy-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
             <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-6 w-full max-w-md shadow-2xl">
@@ -109,6 +125,7 @@ app.get('/', (req, res) => {
         <script>
             function openModal() { document.getElementById('deploy-modal').classList.remove('hidden'); }
             function closeModal() { document.getElementById('deploy-modal').classList.add('hidden'); }
+            function closeIyzicoModal() { document.getElementById('iyzico-modal').classList.add('hidden'); }
 
             async function fetchData() {
                 const res = await fetch('/api/data');
@@ -166,6 +183,26 @@ app.get('/', (req, res) => {
                 }).join('');
             }
 
+            // İyzico Ödemesini Başlat
+            async function startPayment() {
+                const res = await fetch('/api/initialize-payment', { method: 'POST' });
+                const data = await res.json();
+                
+                if (data.status === 'success' && data.checkoutFormContent) {
+                    document.getElementById('iyzico-modal').classList.remove('hidden');
+                    const formContainer = document.getElementById('iyzico-checkout-form');
+                    formContainer.innerHTML = data.checkoutFormContent;
+                    
+                    // İyzico script'ini sayfaya dinamik olarak dahil et
+                    const scriptTag = formContainer.querySelector('script');
+                    if (scriptTag) {
+                        eval(scriptTag.innerHTML);
+                    }
+                } else {
+                    alert('Ödeme formu başlatılamadı: ' + (data.errorMessage || 'Bilinmeyen hata'));
+                }
+            }
+
             async function handleDeploy(e) {
                 e.preventDefault();
                 const repoUrl = document.getElementById('repoUrl').value;
@@ -179,12 +216,6 @@ app.get('/', (req, res) => {
                 });
                 const data = await res.json();
                 if (!res.ok) alert(data.error);
-                fetchData();
-            }
-
-            async function upgradePlan() {
-                await fetch('/api/upgrade', { method: 'POST' });
-                alert('Tebrikler! Pro plana geçtiniz.');
                 fetchData();
             }
 
@@ -207,7 +238,95 @@ app.get('/', (req, res) => {
 
 // API Endpoints
 app.get('/api/data', (req, res) => res.json({ plan: userPlan, projects }));
-app.post('/api/upgrade', (req, res) => { userPlan = 'pro'; res.send({ success: true }); });
+
+// 1. İyzico Ödeme Formunu Başlatma Endpoint'i
+app.post('/api/initialize-payment', (req, res) => {
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers.host;
+    const callbackUrl = `${protocol}://${host}/api/payment-callback`;
+
+    const request = {
+        locale: 'tr',
+        conversationId: '123456789',
+        price: '99.00', // Pro plan ücreti (Örn: 99 TL)
+        paidPrice: '99.00',
+        currency: 'TRY',
+        basketId: 'B67832',
+        paymentGroup: 'PRODUCT',
+        callbackUrl: callbackUrl,
+        buyer: {
+            id: 'BY789',
+            name: 'Ali',
+            surname: 'Üzüm',
+            gsmNumber: '+905350000000',
+            email: 'ali@example.com',
+            identityNumber: '74300864791',
+            registrationAddress: 'Türkiye',
+            ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+            city: 'Istanbul',
+            country: 'Turkey'
+        },
+        shippingAddress: {
+            contactName: 'Ali Üzüm',
+            city: 'Istanbul',
+            country: 'Turkey',
+            address: 'Türkiye'
+        },
+        billingAddress: {
+            contactName: 'Ali Üzüm',
+            city: 'Istanbul',
+            country: 'Turkey',
+            address: 'Türkiye'
+        },
+        basketItems: [
+            {
+                id: 'PRO-PLAN',
+                name: 'Pro Plan Aboneliği',
+                category1: 'Yazılım',
+                itemType: 'VIRTUAL',
+                price: '99.00'
+            }
+        ]
+    };
+
+    iyzipay.checkoutFormInitialize.create(request, function (err, result) {
+        if (err) {
+            return res.status(500).json({ status: 'failure', errorMessage: err.message });
+        }
+        res.json(result);
+    });
+});
+
+// 2. İyzico Ödeme Sonucu Callback (Geri Dönüş) Endpoint'i
+app.post('/api/payment-callback', (req, res) => {
+    const token = req.body.token;
+
+    iyzipay.checkoutForm.retrieve({ token: token }, function (err, result) {
+        if (err || result.status !== 'success') {
+            return res.send(`
+                <body style="background:#09090b;color:#f43f5e;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;">
+                    <div style="text-align:center;">
+                        <h2>Ödeme Başarısız veya İptal Edildi!</h2>
+                        <a href="/" style="color:#38bdf8;">Ana Sayfaya Dön</a>
+                    </div>
+                </body>
+            `);
+        }
+
+        // Ödeme başarılı! Kullanıcıyı Pro plana yükselt
+        userPlan = 'pro';
+
+        res.send(`
+            <body style="background:#09090b;color:#10b981;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;">
+                <div style="text-align:center;">
+                    <h2>Tebrikler! Ödeme Başarılı 🎉</h2>
+                    <p style="color:#a1a1aa;">Hesabınız Pro plana yükseltilmiştir.</p>
+                    <a href="/" style="color:#38bdf8;display:inline-block;margin-top:20px;">Yönetim Paneline Git</a>
+                </div>
+            </body>
+        `);
+    });
+});
 
 app.post('/api/deploy', (req, res) => {
     const { repoUrl } = req.body;
@@ -233,7 +352,6 @@ app.post('/api/deploy-name', (req, res) => {
     executeBuildPipeline(name, projects[name].url);
 });
 
-// Gerçek Derleme ve Yayınlama Motoru
 function executeBuildPipeline(repoName, repoUrl) {
     const projectPath = path.join(PROJECTS_DIR, repoName);
     const gitCmd = fs.existsSync(projectPath) ? `cd "${projectPath}" && git pull` : `git clone "${repoUrl}" "${projectPath}"`;
