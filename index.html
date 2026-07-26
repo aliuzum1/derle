@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini PaaS Dashboard (Vercel & Render Clone)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen font-sans">
+    
+    <!-- Navbar -->
+    <nav class="border-b border-zinc-800 px-6 py-4 flex justify-between items-center bg-zinc-900/50 backdrop-blur">
+        <div class="flex items-center space-x-3">
+            <div class="bg-white text-black font-bold px-3 py-1 rounded text-sm">PaaS</div>
+            <span class="font-semibold text-lg">Cloud Platform</span>
+        </div>
+        <div class="flex items-center space-x-4">
+            <div id="plan-badge" class="text-xs px-3 py-1 rounded-full border font-medium">Yükleniyor...</div>
+            <button id="upgrade-btn" onclick="upgradePlan()" class="hidden bg-gradient-to-r from-amber-500 to-orange-500 text-black font-semibold px-3 py-1.5 rounded-lg text-xs hover:opacity-90 transition shadow-lg shadow-orange-500/10">
+                ✨ Pro'ya Yükselt ($10/ay)
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-6xl mx-auto px-6 py-10">
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight">Projeler</h1>
+                <p id="project-limit-info" class="text-sm text-zinc-400 mt-1">Bulut ortamındaki tüm uygulamalarınızı buradan yönetin.</p>
+            </div>
+            <button onclick="openModal()" class="bg-white text-black hover:bg-zinc-200 font-medium px-4 py-2 rounded-lg text-sm transition">
+                + Yeni Proje Dağıt
+            </button>
+        </div>
+
+        <!-- Projects Grid -->
+        <div id="project-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Projeler buraya yüklenecek -->
+        </div>
+    </main>
+
+    <!-- Modal -->
+    <div id="deploy-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-6 w-full max-w-md shadow-2xl">
+            <h2 class="text-lg font-bold mb-4">Yeni Proje Ekle</h2>
+            <form id="deploy-form" onsubmit="handleDeploy(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-zinc-400 mb-1">GitHub Repo URL</label>
+                    <input type="text" id="repoUrl" required placeholder="https://github.com/kullanici/repo.git" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-zinc-500 text-zinc-200">
+                </div>
+                <div class="flex justify-end space-x-2 pt-2">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-zinc-400 hover:text-white">İptal</button>
+                    <button type="submit" class="bg-white text-black font-medium px-4 py-2 rounded-lg text-sm hover:bg-zinc-200 transition">Dağıt (Deploy)</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripting (Local State & UI) -->
+    <script>
+        // Verileri localStorage'da sakla
+        let userPlan = localStorage.getItem('paas_plan') || 'free';
+        let projects = JSON.parse(localStorage.getItem('paas_projects')) || {};
+
+        function saveState() {
+            localStorage.setItem('paas_plan', userPlan);
+            localStorage.setItem('paas_projects', JSON.stringify(projects));
+        }
+
+        function openModal() { document.getElementById('deploy-modal').classList.remove('hidden'); }
+        function closeModal() { document.getElementById('deploy-modal').classList.add('hidden'); }
+
+        function renderApp() {
+            const badge = document.getElementById('plan-badge');
+            const upgradeBtn = document.getElementById('upgrade-btn');
+            const limitInfo = document.getElementById('project-limit-info');
+            const projectKeys = Object.keys(projects);
+
+            // Plan rozetleri
+            if (userPlan === 'free') {
+                badge.className = "text-xs px-3 py-1 rounded-full border border-zinc-700 bg-zinc-800 text-zinc-300 font-medium";
+                badge.innerText = "Plan: Ücretsiz (Max 2 Proje)";
+                upgradeBtn.classList.remove('hidden');
+                limitInfo.innerText = `Ücretsiz Plan: ${projectKeys.length}/2 proje kullanılıyor.`;
+            } else {
+                badge.className = "text-xs px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 font-medium";
+                badge.innerText = "⭐ Plan: Pro (Sınırsız)";
+                upgradeBtn.classList.add('hidden');
+                limitInfo.innerText = "Pro Plan: Sınırsız proje dağıtım hakkı aktif.";
+            }
+
+            // Proje listesini güncelle
+            const listEl = document.getElementById('project-list');
+            if (projectKeys.length === 0) {
+                listEl.innerHTML = `<div class="col-span-full text-center py-12 border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-sm">Henüz bir proje dağıtılmadı.</div>`;
+                return;
+            }
+
+            listEl.innerHTML = projectKeys.map(name => {
+                const p = projects[name];
+                return `
+                    <div class="border border-zinc-800 bg-zinc-900/40 rounded-xl p-5 flex flex-col justify-between hover:border-zinc-700 transition">
+                        <div>
+                            <div class="flex justify-between items-start mb-2">
+                                <h3 class="font-semibold text-base">${name}</h3>
+                                <span class="text-xs px-2 py-0.5 rounded-full ${p.status === 'Aktif' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}">${p.status}</span>
+                            </div>
+                            <p class="text-xs text-zinc-400 truncate mb-4">${p.url}</p>
+                        </div>
+                        <div class="flex justify-between items-center text-xs text-zinc-500 pt-3 border-t border-zinc-800/60">
+                            <span>Güncelleme: ${p.lastDeploy}</span>
+                            <div class="space-x-2">
+                                <button onclick="triggerDeploy('${name}')" class="text-zinc-300 hover:text-white font-medium bg-zinc-800 hover:bg-zinc-700 px-2 py-1 rounded transition">Yeniden Dağıt</button>
+                                <button onclick="deleteProject('${name}')" class="text-rose-400 hover:text-rose-300 font-medium bg-rose-500/10 px-2 py-1 rounded transition">Sil</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function handleDeploy(e) {
+            e.preventDefault();
+            const repoUrl = document.getElementById('repoUrl').value;
+            const repoName = repoUrl.split('/').pop().replace('.git', '') || 'ornek-proje';
+            const projectKeys = Object.keys(projects);
+
+            // Sınır kontrolü
+            if (userPlan === 'free' && projectKeys.length >= 2 && !projects[repoName]) {
+                alert('Ücretsiz planda en fazla 2 proje barındırabilirsiniz. Sınırsız hak için Pro plana geçin.');
+                closeModal();
+                return;
+            }
+
+            closeModal();
+            document.getElementById('repoUrl').value = '';
+
+            projects[repoName] = {
+                url: repoUrl,
+                status: 'Derleniyor...',
+                lastDeploy: new Date().toLocaleTimeString()
+            };
+            saveState();
+            renderApp();
+
+            // Simüle edilmiş build süreci (3 saniye sonra aktif olur)
+            setTimeout(() => {
+                if (projects[repoName]) {
+                    projects[repoName].status = 'Aktif';
+                    projects[repoName].lastDeploy = new Date().toLocaleTimeString();
+                    saveState();
+                    renderApp();
+                }
+            }, 3000);
+        }
+
+        function upgradePlan() {
+            userPlan = 'pro';
+            saveState();
+            alert('Tebrikler! Simülasyon gereği Pro plana başarıyla geçtiniz.');
+            renderApp();
+        }
+
+        function triggerDeploy(name) {
+            projects[name].status = 'Derleniyor...';
+            saveState();
+            renderApp();
+
+            setTimeout(() => {
+                if (projects[name]) {
+                    projects[name].status = 'Aktif';
+                    projects[name].lastDeploy = new Date().toLocaleTimeString();
+                    saveState();
+                    renderApp();
+                }
+            }, 2500);
+        }
+
+        function deleteProject(name) {
+            if (confirm(`"${name}" projesini silmek istediğinize emin misiniz?`)) {
+                delete projects[name];
+                saveState();
+                renderApp();
+            }
+        }
+
+        renderApp();
+    </script>
+</body>
+</html>
