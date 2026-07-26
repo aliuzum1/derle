@@ -23,7 +23,7 @@ app.use('/preview/:name', (req, res, next) => {
     const p = projects[name];
     
     if (!p || p.status !== 'Aktif') {
-        return res.status(404.html || 404).send(`
+        return res.status(404).send(`
             <body style="background:#09090b;color:#a1a1aa;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;">
                 <div style="text-align:center;">
                     <h2 style="color:#f43f5e;">Proje Henüz Yayında Değil</h2>
@@ -35,7 +35,6 @@ app.use('/preview/:name', (req, res, next) => {
 
     const projectPath = path.join(PROJECTS_DIR, name);
     
-    // Modern frontend projelerinin build çıktı klasörlerini otomatik tespit et
     let targetDir = projectPath;
     if (fs.existsSync(path.join(projectPath, 'dist'))) {
         targetDir = path.join(projectPath, 'dist');
@@ -43,7 +42,6 @@ app.use('/preview/:name', (req, res, next) => {
         targetDir = path.join(projectPath, 'build');
     }
 
-    // URL yönlendirmesini ayarla ve statik dosyaları sun
     req.url = req.url.replace('/preview/' + name, '');
     if (req.url === '' || req.url === '/') {
         req.url = '/index.html';
